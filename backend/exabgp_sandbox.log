@@ -1,0 +1,2 @@
+{"ok": true, "body": {"action": "announce", "prefix": "198.51.100.0/25", "api_key": "test-key-123"}}
+{"ok": true, "body": {"action": "withdraw", "prefix": "198.51.100.0/25", "api_key": "test-key-123"}}

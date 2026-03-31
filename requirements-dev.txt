@@ -1,0 +1,7 @@
+sqlalchemy
+radix
+pytest
+httpx
+
+# optional for real device adapters
+# netmiko

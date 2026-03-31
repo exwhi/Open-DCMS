@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: open-dcms-agent
+spec:
+  selector:
+    matchLabels:
+      app: open-dcms-agent
+  template:
+    metadata:
+      labels:
+        app: open-dcms-agent
+    spec:
+      containers:
+        - name: agent
+          image: open-dcms-agent:local
+          env:
+            - name: SERVER_URL
+              value: "http://open-dcms-backend"
+            - name: TENANT
+              value: "demo"
+          args: ["--server", "http://open-dcms-backend", "--tenant", "demo"]

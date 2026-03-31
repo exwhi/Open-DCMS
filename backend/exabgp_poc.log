@@ -1,0 +1,3 @@
+{"path": "/exabgp", "body": {"test": "ping"}}
+{"path": "/exabgp", "body": {"action": "announce", "prefix": "198.51.100.0/25"}}
+{"path": "/exabgp", "body": {"action": "withdraw", "prefix": "198.51.100.0/25"}}
