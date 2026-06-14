@@ -169,6 +169,198 @@ async def app(scope, receive, send):
         await send({"type": "http.response.body", "body": body})
         return
 
+    # POST /api/v1/blackhole -> trigger blackhole via adapter (admin-only)
+    if method == 'POST' and path == '/api/v1/blackhole':
+        more_body = True
+        body_bytes = b''
+        while more_body:
+            event = await receive()
+            if event['type'] == 'http.request':
+                body_bytes += event.get('body', b'')
+                more_body = event.get('more_body', False)
+        try:
+            obj = json.loads(body_bytes.decode()) if body_bytes else {}
+        except Exception:
+            obj = {}
+        prefix = obj.get('prefix')
+        action = obj.get('action', 'add')  # 'add' or 'remove'
+        adapter = obj.get('adapter', 'exabgp')
+        community = obj.get('community')
+        if not prefix:
+            body = json.dumps({'detail': 'prefix required'}).encode()
+            await send({'type': 'http.response.start', 'status': 400, 'headers': [[b'content-type', b'application/json']]} )
+            await send({'type': 'http.response.body', 'body': body})
+            return
+        # lazy import of adapters
+        try:
+            from backend import router_adapters as rad
+        except Exception:
+            try:
+                import router_adapters as rad
+            except Exception:
+                rad = None
+        result = False
+        detail = None
+        try:
+            if not rad:
+                raise RuntimeError('router adapters not available')
+            # map adapter name to class
+            amap = {
+                'cisco': rad.CiscoIOSAdapter,
+                'juniper': rad.JuniperAdapter,
+                'exabgp': rad.ExaBGPAdapter,
+            }
+            cls = amap.get(adapter.lower(), rad.ExaBGPAdapter)
+            inst = cls(adapter, config=obj.get('config'))
+            if action == 'remove':
+                result = inst.remove_blackhole(prefix)
+            else:
+                result = inst.send_blackhole(prefix, community=community)
+            detail = 'ok' if result else 'failed'
+        except Exception as e:
+            detail = str(e)
+            result = False
+
+        # record action to DATA_DIR
+        try:
+            log_entry = {
+                'time': datetime.utcnow().isoformat() + 'Z',
+                'prefix': prefix,
+                'action': action,
+                'adapter': adapter,
+                'community': community,
+                'result': result,
+                'detail': detail,
+            }
+            lf = os.path.join(DATA_DIR, 'blackholes.jsonl')
+            with open(lf, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
+
+        # also record in DB if available for audit/rollback
+        try:
+            if db_mod:
+                try:
+                    # operator: record admin key presence (do not store raw key in prod)
+                    operator = 'admin'
+                    lid = db_mod.log_blackhole_action(prefix=prefix, action=action, adapter=adapter, community=community, result=result, detail=detail, operator=operator)
+                    # include DB id in response detail when possible
+                    detail = (detail or '') + f' db_id={lid}'
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        status = 200 if result else 500
+        body = json.dumps({'result': result, 'detail': detail}).encode()
+        await send({'type': 'http.response.start', 'status': status, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+        await send({'type': 'http.response.body', 'body': body})
+        return
+
+    # GET /api/v1/blackhole/logs -> list recent blackhole actions (admin)
+    if method == 'GET' and path == '/api/v1/blackhole/logs':
+        qs = scope.get('query_string', b'').decode()
+        from urllib.parse import parse_qs
+        params = parse_qs(qs)
+        try:
+            limit = int(params.get('limit', ['100'])[0])
+        except Exception:
+            limit = 100
+        prefix = params.get('prefix', [None])[0]
+        try:
+            if not db_mod:
+                raise RuntimeError('DB not enabled')
+            logs = db_mod.list_blackhole_actions(limit=limit, prefix=prefix)
+            body = json.dumps({'logs': logs}, ensure_ascii=False).encode()
+            await send({'type': 'http.response.start', 'status': 200, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+            await send({'type': 'http.response.body', 'body': body})
+        except Exception as e:
+            body = json.dumps({'detail': 'failed', 'error': str(e)}).encode()
+            await send({'type': 'http.response.start', 'status': 500, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+            await send({'type': 'http.response.body', 'body': body})
+        return
+
+    # POST /api/v1/blackhole/revert -> revert a prior blackhole action by id (admin)
+    if method == 'POST' and path == '/api/v1/blackhole/revert':
+        more_body = True
+        body_bytes = b''
+        while more_body:
+            event = await receive()
+            if event['type'] == 'http.request':
+                body_bytes += event.get('body', b'')
+                more_body = event.get('more_body', False)
+        try:
+            obj = json.loads(body_bytes.decode()) if body_bytes else {}
+        except Exception:
+            obj = {}
+        orig_id = obj.get('id')
+        if not orig_id:
+            body = json.dumps({'detail': 'id required'}).encode()
+            await send({'type': 'http.response.start', 'status': 400, 'headers': [[b'content-type', b'application/json']]} )
+            await send({'type': 'http.response.body', 'body': body})
+            return
+        try:
+            if not db_mod:
+                raise RuntimeError('DB not enabled')
+            orig = db_mod.get_blackhole_action(int(orig_id))
+            if not orig:
+                body = json.dumps({'detail': 'not found'}).encode()
+                await send({'type': 'http.response.start', 'status': 404, 'headers': [[b'content-type', b'application/json']]} )
+                await send({'type': 'http.response.body', 'body': body})
+                return
+            # inverse action
+            inv = 'remove' if orig.get('action') == 'add' else 'add'
+            adapter = orig.get('adapter') or 'exabgp'
+            community = orig.get('community')
+            # lazy import adapters
+            try:
+                from backend import router_adapters as rad
+            except Exception:
+                try:
+                    import router_adapters as rad
+                except Exception:
+                    rad = None
+            if not rad:
+                raise RuntimeError('router adapters not available')
+            amap = {
+                'cisco': rad.CiscoIOSAdapter,
+                'juniper': rad.JuniperAdapter,
+                'exabgp': rad.ExaBGPAdapter,
+            }
+            cls = amap.get((adapter or 'exabgp').lower(), rad.ExaBGPAdapter)
+            inst = cls(adapter, config={})
+            if inv == 'remove':
+                ok = inst.remove_blackhole(orig.get('prefix'))
+            else:
+                ok = inst.send_blackhole(orig.get('prefix'), community=community)
+            detail = 'ok' if ok else 'failed'
+            # log revert action
+            try:
+                operator = 'admin'
+                new_id = None
+                if db_mod:
+                    new_id = db_mod.log_blackhole_action(prefix=orig.get('prefix'), action=inv, adapter=adapter, community=community, result=ok, detail=f'revert_of={orig.get("id")}', operator=operator)
+            except Exception:
+                new_id = None
+            # also append to file log
+            try:
+                lf = os.path.join(DATA_DIR, 'blackholes.jsonl')
+                with open(lf, 'a', encoding='utf-8') as f:
+                    f.write(json.dumps({'time': datetime.utcnow().isoformat() + 'Z', 'prefix': orig.get('prefix'), 'action': inv, 'adapter': adapter, 'result': ok, 'detail': f'revert_of={orig.get("id")}', 'db_id': new_id}, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+            status = 200 if ok else 500
+            body = json.dumps({'result': ok, 'detail': detail, 'log_id': new_id}).encode()
+            await send({'type': 'http.response.start', 'status': status, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+            await send({'type': 'http.response.body', 'body': body})
+            return
+        except Exception as e:
+            body = json.dumps({'detail': 'failed', 'error': str(e)}).encode()
+            await send({'type': 'http.response.start', 'status': 500, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+            await send({'type': 'http.response.body', 'body': body})
+            return
+
     # ASN topology endpoints
     if path.startswith('/api/v1/asn'):
         # GET /api/v1/asn -> list ASNs
@@ -316,197 +508,7 @@ async def app(scope, receive, send):
                 await send({'type': 'http.response.body', 'body': body})
             return
 
-        # POST /api/v1/blackhole -> trigger blackhole via adapter (admin-only)
-        if method == 'POST' and path == '/api/v1/blackhole':
-            more_body = True
-            body_bytes = b''
-            while more_body:
-                event = await receive()
-                if event['type'] == 'http.request':
-                    body_bytes += event.get('body', b'')
-                    more_body = event.get('more_body', False)
-            try:
-                obj = json.loads(body_bytes.decode()) if body_bytes else {}
-            except Exception:
-                obj = {}
-            prefix = obj.get('prefix')
-            action = obj.get('action', 'add')  # 'add' or 'remove'
-            adapter = obj.get('adapter', 'exabgp')
-            community = obj.get('community')
-            if not prefix:
-                body = json.dumps({'detail': 'prefix required'}).encode()
-                await send({'type': 'http.response.start', 'status': 400, 'headers': [[b'content-type', b'application/json']]} )
-                await send({'type': 'http.response.body', 'body': body})
-                return
-            # lazy import of adapters
-            try:
-                from backend import router_adapters as rad
-            except Exception:
-                try:
-                    import router_adapters as rad
-                except Exception:
-                    rad = None
-            result = False
-            detail = None
-            try:
-                if not rad:
-                    raise RuntimeError('router adapters not available')
-                # map adapter name to class
-                amap = {
-                    'cisco': rad.CiscoIOSAdapter,
-                    'juniper': rad.JuniperAdapter,
-                    'exabgp': rad.ExaBGPAdapter,
-                }
-                cls = amap.get(adapter.lower(), rad.ExaBGPAdapter)
-                inst = cls(adapter, config=obj.get('config'))
-                if action == 'remove':
-                    result = inst.remove_blackhole(prefix)
-                else:
-                    result = inst.send_blackhole(prefix, community=community)
-                detail = 'ok' if result else 'failed'
-            except Exception as e:
-                detail = str(e)
-                result = False
-
-            # record action to DATA_DIR
-            try:
-                log_entry = {
-                    'time': datetime.utcnow().isoformat() + 'Z',
-                    'prefix': prefix,
-                    'action': action,
-                    'adapter': adapter,
-                    'community': community,
-                    'result': result,
-                    'detail': detail,
-                }
-                lf = os.path.join(DATA_DIR, 'blackholes.jsonl')
-                with open(lf, 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
-            except Exception:
-                pass
-
-            # also record in DB if available for audit/rollback
-            try:
-                if db_mod:
-                    try:
-                        # operator: record admin key presence (do not store raw key in prod)
-                        operator = 'admin'
-                        lid = db_mod.log_blackhole_action(prefix=prefix, action=action, adapter=adapter, community=community, result=result, detail=detail, operator=operator)
-                        # include DB id in response detail when possible
-                        detail = (detail or '') + f' db_id={lid}'
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            status = 200 if result else 500
-            body = json.dumps({'result': result, 'detail': detail}).encode()
-            await send({'type': 'http.response.start', 'status': status, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
-            await send({'type': 'http.response.body', 'body': body})
-            return
-
-        # GET /api/v1/blackhole/logs -> list recent blackhole actions (admin)
-        if method == 'GET' and path == '/api/v1/blackhole/logs':
-            qs = scope.get('query_string', b'').decode()
-            from urllib.parse import parse_qs
-            params = parse_qs(qs)
-            try:
-                limit = int(params.get('limit', ['100'])[0])
-            except Exception:
-                limit = 100
-            prefix = params.get('prefix', [None])[0]
-            try:
-                if not db_mod:
-                    raise RuntimeError('DB not enabled')
-                logs = db_mod.list_blackhole_actions(limit=limit, prefix=prefix)
-                body = json.dumps({'logs': logs}, ensure_ascii=False).encode()
-                await send({'type': 'http.response.start', 'status': 200, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
-                await send({'type': 'http.response.body', 'body': body})
-            except Exception as e:
-                body = json.dumps({'detail': 'failed', 'error': str(e)}).encode()
-                await send({'type': 'http.response.start', 'status': 500, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
-                await send({'type': 'http.response.body', 'body': body})
-            return
-
-        # POST /api/v1/blackhole/revert -> revert a prior blackhole action by id (admin)
-        if method == 'POST' and path == '/api/v1/blackhole/revert':
-            more_body = True
-            body_bytes = b''
-            while more_body:
-                event = await receive()
-                if event['type'] == 'http.request':
-                    body_bytes += event.get('body', b'')
-                    more_body = event.get('more_body', False)
-            try:
-                obj = json.loads(body_bytes.decode()) if body_bytes else {}
-            except Exception:
-                obj = {}
-            orig_id = obj.get('id')
-            if not orig_id:
-                body = json.dumps({'detail': 'id required'}).encode()
-                await send({'type': 'http.response.start', 'status': 400, 'headers': [[b'content-type', b'application/json']]} )
-                await send({'type': 'http.response.body', 'body': body})
-                return
-            try:
-                if not db_mod:
-                    raise RuntimeError('DB not enabled')
-                orig = db_mod.get_blackhole_action(int(orig_id))
-                if not orig:
-                    body = json.dumps({'detail': 'not found'}).encode()
-                    await send({'type': 'http.response.start', 'status': 404, 'headers': [[b'content-type', b'application/json']]} )
-                    await send({'type': 'http.response.body', 'body': body})
-                    return
-                # inverse action
-                inv = 'remove' if orig.get('action') == 'add' else 'add'
-                adapter = orig.get('adapter') or 'exabgp'
-                community = orig.get('community')
-                # lazy import adapters
-                try:
-                    from backend import router_adapters as rad
-                except Exception:
-                    try:
-                        import router_adapters as rad
-                    except Exception:
-                        rad = None
-                if not rad:
-                    raise RuntimeError('router adapters not available')
-                amap = {
-                    'cisco': rad.CiscoIOSAdapter,
-                    'juniper': rad.JuniperAdapter,
-                    'exabgp': rad.ExaBGPAdapter,
-                }
-                cls = amap.get((adapter or 'exabgp').lower(), rad.ExaBGPAdapter)
-                inst = cls(adapter, config={})
-                if inv == 'remove':
-                    ok = inst.remove_blackhole(orig.get('prefix'))
-                else:
-                    ok = inst.send_blackhole(orig.get('prefix'), community=community)
-                detail = 'ok' if ok else 'failed'
-                # log revert action
-                try:
-                    operator = 'admin'
-                    new_id = None
-                    if db_mod:
-                        new_id = db_mod.log_blackhole_action(prefix=orig.get('prefix'), action=inv, adapter=adapter, community=community, result=ok, detail=f'revert_of={orig.get("id")}', operator=operator)
-                except Exception:
-                    new_id = None
-                # also append to file log
-                try:
-                    lf = os.path.join(DATA_DIR, 'blackholes.jsonl')
-                    with open(lf, 'a', encoding='utf-8') as f:
-                        f.write(json.dumps({'time': datetime.utcnow().isoformat() + 'Z', 'prefix': orig.get('prefix'), 'action': inv, 'adapter': adapter, 'result': ok, 'detail': f'revert_of={orig.get("id")}', 'db_id': new_id}, ensure_ascii=False) + '\n')
-                except Exception:
-                    pass
-                status = 200 if ok else 500
-                body = json.dumps({'result': ok, 'detail': detail, 'log_id': new_id}).encode()
-                await send({'type': 'http.response.start', 'status': status, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
-                await send({'type': 'http.response.body', 'body': body})
-                return
-            except Exception as e:
-                body = json.dumps({'detail': 'failed', 'error': str(e)}).encode()
-                await send({'type': 'http.response.start', 'status': 500, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
-                await send({'type': 'http.response.body', 'body': body})
-                return
+        
 
         # IRR / prefix mapping endpoints
         # POST /api/v1/irr/map  (admin)
