@@ -2,3 +2,17 @@
 {"time": "2026-03-06T09:02:24Z", "prefix": "198.51.100.0/25", "action": "remove", "adapter": "exabgp", "result": false, "detail": "poc_withdraw", "operator": "tester"}
 {"time": "2026-03-06T09:17:44Z", "prefix": "198.51.100.0/25", "action": "add", "adapter": "exabgp", "result": true, "detail": "poc_send", "operator": "tester"}
 {"time": "2026-03-06T09:17:44Z", "prefix": "198.51.100.0/25", "action": "remove", "adapter": "exabgp", "result": true, "detail": "poc_withdraw", "operator": "tester"}
+{"time": "2026-06-14T01:15:39.887902Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T01:15:46.035617Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=4", "db_id": 5}
+{"time": "2026-06-14T01:16:06.437457Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T01:16:12.595441Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=7", "db_id": 8}
+{"time": "2026-06-14T01:53:28.693359Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T01:53:34.864031Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=9", "db_id": 10}
+{"time": "2026-06-14T01:54:00.714972Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T01:54:06.838688Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=12", "db_id": 13}
+{"time": "2026-06-14T02:08:50.041861Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T02:08:56.932066Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=15", "db_id": 16}
+{"time": "2026-06-14T02:16:26.518812Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T02:16:32.754295Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=18", "db_id": 19}
+{"time": "2026-06-14T03:03:10.885014Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T03:03:17.069390Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=21", "db_id": 22}
