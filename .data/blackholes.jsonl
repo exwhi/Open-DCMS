@@ -1,4 +1,8 @@
-{"time": "2026-03-06T09:02:19Z", "prefix": "198.51.100.0/25", "action": "add", "adapter": "exabgp", "result": false, "detail": "poc_send", "operator": "tester"}
-{"time": "2026-03-06T09:02:24Z", "prefix": "198.51.100.0/25", "action": "remove", "adapter": "exabgp", "result": false, "detail": "poc_withdraw", "operator": "tester"}
-{"time": "2026-03-06T09:17:44Z", "prefix": "198.51.100.0/25", "action": "add", "adapter": "exabgp", "result": true, "detail": "poc_send", "operator": "tester"}
-{"time": "2026-03-06T09:17:44Z", "prefix": "198.51.100.0/25", "action": "remove", "adapter": "exabgp", "result": true, "detail": "poc_withdraw", "operator": "tester"}
+{"time": "2026-06-14T03:42:13.383282Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T03:42:19.489834Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=2", "db_id": 3}
+{"time": "2026-06-14T03:44:15.646495Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T03:44:21.802251Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=5", "db_id": 6}
+{"time": "2026-06-14T03:46:43.617887Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T03:46:49.785546Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=8", "db_id": 9}
+{"time": "2026-06-14T03:47:52.648838Z", "prefix": "192.0.2.0/24", "action": "add", "adapter": "exabgp", "community": null, "result": false, "detail": "failed"}
+{"time": "2026-06-14T03:47:58.777446Z", "prefix": "192.0.2.0/24", "action": "remove", "adapter": "exabgp", "result": false, "detail": "revert_of=11", "db_id": 12}

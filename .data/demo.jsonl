@@ -1,2 +1,0 @@
-{"received_at": "2026-02-27T09:55:36.601030Z", "source": "local-test", "timestamp": 1772186136.59142, "payload": {"test": 1}}
-{"received_at": "2026-02-28T03:41:08.990999Z", "source": "cli-test", "timestamp": 1772250068.9859996, "payload": {"x": 42}}

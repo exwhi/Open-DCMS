@@ -134,31 +134,16 @@ def create_user_endpoint(req: CreateUserRequest, request: Request, current=Depen
     if current.get('tenant') != req.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='cannot create user for other tenant')
     uid = auth.create_user(req.tenant_id, req.username, password=req.password, roles=req.roles)
-    # audit
+    # audit: record operator, ip, request id, user agent and request path
     operator = current.get('user_id')
     ip = request.client.host if request.client else None
     req_id = request.headers.get('X-Request-ID') or uuid4().hex
-    db.log_user_audit(operator_user_id=operator, action='create_user', target_user_id=uid, target_username=req.username, tenant_id=req.tenant_id, details=f"roles={req.roles}",)
-    # update audit record with ip and request id by inserting with fields
-    # (log_user_audit currently accepts operator_ip/request_id via kwargs if provided)
+    user_agent = request.headers.get('user-agent')
+    path = str(request.url.path)
     try:
-        db.log_user_audit(operator_user_id=operator, action='create_user', target_user_id=uid, target_username=req.username, tenant_id=req.tenant_id, details=f"roles={req.roles}",)
+        db.log_user_audit(operator_user_id=operator, action='create_user', target_user_id=uid, target_username=req.username, tenant_id=req.tenant_id, details=f"roles={req.roles}", operator_ip=ip, request_id=req_id, user_agent=user_agent, request_path=path)
     except Exception:
         pass
-    # For compatibility we also store operator_ip/request_id by direct call
-    try:
-        dbs = db.SessionLocal()
-        obj = dbs.query(db.UserAudit).order_by(db.UserAudit.performed_at.desc()).first()
-        if obj:
-            obj.operator_ip = ip
-            obj.request_id = req_id
-            dbs.add(obj)
-            dbs.commit()
-    finally:
-        try:
-            dbs.close()
-        except Exception:
-            pass
     return {'user_id': uid, 'username': req.username, 'tenant': req.tenant_id}
 
 
@@ -175,19 +160,23 @@ def reset_password_endpoint(req: ResetPasswordRequest, request: Request, current
     operator = current.get('user_id')
     ip = request.client.host if request.client else None
     req_id = request.headers.get('X-Request-ID') or uuid4().hex
+    user_agent = request.headers.get('user-agent')
+    path = str(request.url.path)
     try:
-        dbs = db.SessionLocal()
-        obj_id = db.log_user_audit(operator_user_id=operator, action='reset_password', target_user_id=None, target_username=req.username, tenant_id=req.tenant_id, details='reset via admin')
-        # update with ip/request id
-        row = dbs.query(db.UserAudit).filter(db.UserAudit.id == obj_id).first()
-        if row:
-            row.operator_ip = ip
-            row.request_id = req_id
-            dbs.add(row)
-            dbs.commit()
-    finally:
-        try:
-            dbs.close()
-        except Exception:
-            pass
+        db.log_user_audit(operator_user_id=operator, action='reset_password', target_user_id=None, target_username=req.username, tenant_id=req.tenant_id, details='reset via admin', operator_ip=ip, request_id=req_id, user_agent=user_agent, request_path=path)
+    except Exception:
+        pass
     return {'result': 'ok'}
+
+
+
+@app.get('/users/audit')
+def get_user_audit(tenant_id: str, limit: int = 50, cursor: Optional[str] = None, current=Depends(get_current_user_from_header)):
+    # require admin role and tenant match
+    roles = current.get('roles', [])
+    if 'admin' not in roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='admin role required')
+    if current.get('tenant') != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='cannot list audit for other tenant')
+    res = db.list_user_audit(tenant_id=tenant_id, limit=limit, cursor=cursor)
+    return res
