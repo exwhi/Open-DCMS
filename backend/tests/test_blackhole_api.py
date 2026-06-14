@@ -39,7 +39,14 @@ async def test_log_and_list():
 
 @pytest.mark.asyncio
 async def test_asgi_blackhole_and_revert():
-    async with httpx.AsyncClient(app=asgi.app, base_url='http://test') as client:
+    # construct ASGI-capable httpx client; prefer `app=` arg, fallback to ASGITransport
+    try:
+        client = httpx.AsyncClient(app=asgi.app, base_url='http://test')
+    except TypeError:
+        transport = httpx.ASGITransport(app=asgi.app)
+        client = httpx.AsyncClient(transport=transport, base_url='http://test')
+
+    async with client as client:
         # POST blackhole via ASGI
         r = await client.post('/api/v1/blackhole', headers={'X-Admin-Key': ADMIN_KEY}, json={'prefix': '192.0.2.0/24', 'action': 'add', 'adapter': 'exabgp'})
         assert r.status_code in (200, 500)  # adapter stubs may return ok or simulated fail
