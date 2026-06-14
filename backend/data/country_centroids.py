@@ -3,6 +3,8 @@ Simple built-in country centroid lookup for map fallback.
 Keys: ISO2 code or common country name uppercase -> (lat, lon)
 This is a lightweight fallback; for production consider GeoNames or similar.
 """
+import os
+
 MAPPING = {
     'CN': (35.8617, 104.1954), 'CHINA': (35.8617, 104.1954),
     'US': (39.8283, -98.5795), 'UNITED STATES': (39.8283, -98.5795), 'USA': (39.8283, -98.5795),
@@ -48,4 +50,32 @@ def get_country_center(name):
         return MAPPING[key]
     if len(key) >= 2 and key[:2] in MAPPING:
         return MAPPING[key[:2]]
+    # optional GeoNames fallback when GEONAMES_USERNAME is set
+    user = os.getenv('GEONAMES_USERNAME')
+    if not user:
+        return (None, None)
+    # try to interpret key as ISO country code and call countryInfoJSON
+    code = key[:2]
+    try:
+        import requests
+        url = f'https://secure.geonames.org/countryInfoJSON?country={code}&username={user}'
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            j = r.json()
+            gl = j.get('geonames') or []
+            if gl:
+                item = gl[0]
+                # compute centroid from bounding box if available
+                try:
+                    north = float(item.get('north'))
+                    south = float(item.get('south'))
+                    east = float(item.get('east'))
+                    west = float(item.get('west'))
+                    lat = (north + south) / 2.0
+                    lon = (east + west) / 2.0
+                    return (lat, lon)
+                except Exception:
+                    pass
+    except Exception:
+        pass
     return (None, None)
