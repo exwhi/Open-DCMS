@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Local pre-commit hook template: block adding/removing proposal file.
+
+Install locally with:
+  git config core.hooksPath .githooks
+
+This hook prevents commits that add/modify or delete the project proposal
+file `Open-DCMS 项目企划书.md`.
+"""
+import sys
+import subprocess
+
+PROPOSAL = 'Open-DCMS 项目企划书.md'
+
+def staged_files():
+    p = subprocess.run(['git', 'diff', '--cached', '--name-status'], capture_output=True, text=True)
+    if p.returncode != 0:
+        return []
+    lines = p.stdout.strip().splitlines()
+    entries = [l.split('\t', 1) for l in lines if l]
+    return entries
+
+def main():
+    for status, path in staged_files():
+        # status: A, M, D, R...
+        if path.strip() == PROPOSAL:
+            if status in ('A', 'M'):
+                print(f'ERROR: Committing changes to {PROPOSAL} is blocked by local policy.')
+                sys.exit(1)
+            if status == 'D':
+                print(f'ERROR: Deleting {PROPOSAL} is blocked by local policy.')
+                sys.exit(1)
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

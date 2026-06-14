@@ -1,0 +1,8 @@
+Updated CI and lint behavior:
+
+- Make `lint` job blocking: `flake8` no longer allowed to pass with warnings; failures will mark the job as failed.
+- Upload coverage.xml to Codecov if `CODECOV_TOKEN` secret is provided (step added to `upload-coverage`).
+
+Previously: workflow split into `lint`, `test` (matrix) and `upload-coverage`.
+
+All tests pass locally (19 passed). Please add a CODECOV_TOKEN secret in repository settings if you want automatic upload to Codecov.

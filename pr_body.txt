@@ -1,0 +1,9 @@
+Detailed changes:
+- agent/parsers: add adapters for python_sflow, pyflowtools, flowtools and sflow; add bundled netflow_ipfix stub.
+- agent/parsers/adapter_utils.py: add `normalize_record` utility to standardize parser outputs.
+- agent/collectors.py: prefer registered parsers, use adapters, normalize outputs before callback, add `_netflow_v5_fallback` with richer fields, add `register_parser`/`get_registered_parser`.
+- agent/simple_agent.py: add `--parser-priority` CLI option.
+- tests: add `agent/tests/test_collectors.py`, `agent/tests/test_parser_registration.py`, `agent/tests/test_normalize.py`.
+- CI: add .github/workflows/agent-tests.yml and expand matrix to Python 3.11/3.12 and run coverage.
+
+All tests pass locally (19 passed).
