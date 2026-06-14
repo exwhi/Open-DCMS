@@ -1,1 +1,5 @@
 radix
+# parsing helpers (optional)
+python-sflow
+pyflowtools
+pytest

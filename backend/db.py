@@ -112,6 +112,8 @@ class UserAudit(Base):
     details = Column(String(1024), nullable=True)
     operator_ip = Column(String(64), nullable=True)
     request_id = Column(String(128), nullable=True, index=True)
+    user_agent = Column(String(512), nullable=True)
+    request_path = Column(String(512), nullable=True)
     performed_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
@@ -136,6 +138,10 @@ def init_db():
                     conn.execute(text("ALTER TABLE user_audit ADD COLUMN operator_ip TEXT"))
                 if 'request_id' not in cols:
                     conn.execute(text("ALTER TABLE user_audit ADD COLUMN request_id TEXT"))
+                if 'user_agent' not in cols:
+                    conn.execute(text("ALTER TABLE user_audit ADD COLUMN user_agent TEXT"))
+                if 'request_path' not in cols:
+                    conn.execute(text("ALTER TABLE user_audit ADD COLUMN request_path TEXT"))
             except Exception:
                 pass
 
@@ -611,10 +617,10 @@ def revoke_refresh_token_db(token: str):
         db.close()
 
 
-def log_user_audit(operator_user_id: str, action: str, target_user_id: str = None, target_username: str = None, tenant_id: str = None, details: str = None):
+def log_user_audit(operator_user_id: str, action: str, target_user_id: str = None, target_username: str = None, tenant_id: str = None, details: str = None, operator_ip: str = None, request_id: str = None, user_agent: str = None, request_path: str = None):
     dbs = SessionLocal()
     try:
-        obj = UserAudit(operator_user_id=operator_user_id, action=action, target_user_id=target_user_id, target_username=target_username, tenant_id=tenant_id, details=details)
+        obj = UserAudit(operator_user_id=operator_user_id, action=action, target_user_id=target_user_id, target_username=target_username, tenant_id=tenant_id, details=details, operator_ip=operator_ip, request_id=request_id, user_agent=user_agent, request_path=request_path)
         dbs.add(obj)
         dbs.commit()
         return obj.id
@@ -622,15 +628,37 @@ def log_user_audit(operator_user_id: str, action: str, target_user_id: str = Non
         dbs.close()
 
 
-def list_user_audit(tenant_id: str = None, limit: int = 100):
+def list_user_audit(tenant_id: str = None, limit: int = 100, cursor: str = None):
+    """List user audit entries with cursor-based pagination.
+
+    `cursor` is an opaque token produced by this function; when provided, entries with id < last_id are returned.
+    """
     dbs = SessionLocal()
     try:
-        q = dbs.query(UserAudit).order_by(UserAudit.performed_at.desc())
+        q = dbs.query(UserAudit)
         if tenant_id:
             q = q.filter(UserAudit.tenant_id == tenant_id)
-        rows = q.limit(limit).all()
+
+        # handle cursor (opaque base64 JSON or numeric id)
+        if cursor:
+            try:
+                # try numeric
+                last = int(cursor)
+                q = q.filter(UserAudit.id < last)
+            except Exception:
+                try:
+                    import base64, json as _json
+                    dec = base64.b64decode(cursor)
+                    obj = _json.loads(dec.decode())
+                    last = int(obj.get('last_id'))
+                    q = q.filter(UserAudit.id < last)
+                except Exception:
+                    pass
+
+        total = q.count()
+        rows = q.order_by(UserAudit.performed_at.desc(), UserAudit.id.desc()).limit(limit * 2).all()
         out = []
-        for r in rows:
+        for r in rows[:limit]:
             out.append({
                 'id': r.id,
                 'operator_user_id': r.operator_user_id,
@@ -639,9 +667,24 @@ def list_user_audit(tenant_id: str = None, limit: int = 100):
                 'target_username': r.target_username,
                 'tenant_id': r.tenant_id,
                 'details': r.details,
+                'operator_ip': r.operator_ip,
+                'request_id': r.request_id,
+                'user_agent': r.user_agent,
+                'request_path': r.request_path,
                 'performed_at': r.performed_at.isoformat() if r.performed_at else None,
             })
-        return out
+
+        next_cursor = None
+        if out:
+            last_id = out[-1]['id']
+            try:
+                import base64, json as _json
+                token = _json.dumps({'last_id': last_id}).encode()
+                next_cursor = base64.b64encode(token).decode()
+            except Exception:
+                next_cursor = str(last_id)
+
+        return {'total': total, 'limit': limit, 'items': out, 'next_cursor': next_cursor}
     finally:
         dbs.close()
 
