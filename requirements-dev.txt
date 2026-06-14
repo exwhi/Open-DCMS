@@ -2,6 +2,7 @@ sqlalchemy
 radix
 pytest
 httpx
+pytest-asyncio
 
 # optional for real device adapters
 # netmiko
