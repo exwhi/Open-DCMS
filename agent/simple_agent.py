@@ -146,6 +146,7 @@ def main():
     p.add_argument('--collector', choices=['fake','netflow','sflow'], default='fake', help='which collector to run')
     p.add_argument('--listen-host', default='0.0.0.0', help='collector listen host for flow protocols')
     p.add_argument('--listen-port', type=int, default=6343, help='collector listen port for sFlow/NetFlow (default 6343)')
+    p.add_argument('--parser-priority', choices=['auto','registered','adapters','fallback'], default='auto', help='parser discovery priority order')
     args = p.parse_args()
 
     cert = None
@@ -199,6 +200,11 @@ def main():
     listener = None
     if collector_mode in ('netflow', 'sflow'):
         try:
+            # if user requested registered parser preference, try to use registered parser
+            if args.parser_priority == 'registered':
+                reg = collectors.get_registered_parser(collector_mode)
+                if reg:
+                    collectors.register_parser(collector_mode, reg)
             listener = collectors.start_listener(mode=collector_mode, host=args.listen_host, port=args.listen_port, callback=lambda ev: append_to_cache(args.cache_file, ev))
             print('started listener for', collector_mode, 'on', args.listen_host, args.listen_port)
         except Exception as e:
