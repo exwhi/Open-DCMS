@@ -52,8 +52,6 @@ class ASN(Base):
     asn = Column(Integer, unique=True, index=True, nullable=False)
     name = Column(String(512), nullable=True)
     country = Column(String(8), nullable=True)
-    lat = Column(String(32), nullable=True)
-    lon = Column(String(32), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -140,18 +138,6 @@ def init_db():
                     conn.execute(text("ALTER TABLE user_audit ADD COLUMN operator_ip TEXT"))
                 if 'request_id' not in cols:
                     conn.execute(text("ALTER TABLE user_audit ADD COLUMN request_id TEXT"))
-            except Exception:
-                pass
-            # ensure ASN lat/lon columns exist
-            try:
-                res = conn.execute(text("PRAGMA table_info('asns')")).all()
-                cols = [r[1] for r in res]
-                if 'lat' not in cols:
-                    conn.execute(text("ALTER TABLE asns ADD COLUMN lat TEXT"))
-                if 'lon' not in cols:
-                    conn.execute(text("ALTER TABLE asns ADD COLUMN lon TEXT"))
-            except Exception:
-                pass
                 if 'user_agent' not in cols:
                     conn.execute(text("ALTER TABLE user_audit ADD COLUMN user_agent TEXT"))
                 if 'request_path' not in cols:
@@ -388,49 +374,6 @@ def get_as_neighbors(asn: int):
             else:
                 neighbors.append({"asn": r.asn, "relation": r.relation})
         return neighbors
-    finally:
-        db.close()
-
-
-def set_asn_location(asn: int, lat: float, lon: float):
-    db = SessionLocal()
-    try:
-        row = db.query(ASN).filter(ASN.asn == int(asn)).first()
-        if not row:
-            # create if missing
-            row = ASN(asn=int(asn))
-            db.add(row)
-        row.lat = str(lat) if lat is not None else None
-        row.lon = str(lon) if lon is not None else None
-        db.commit()
-        return True
-    finally:
-        db.close()
-
-
-def seed_asn_locations_from_country_centroids(limit: int = None):
-    """Seed ASN lat/lon using existing ASN.country and built-in centroids."""
-    try:
-        from backend.data.country_centroids import get_country_center
-    except Exception:
-        return 0
-    db = SessionLocal()
-    try:
-        q = db.query(ASN)
-        if limit:
-            q = q.limit(int(limit))
-        rows = q.all()
-        count = 0
-        for r in rows:
-            if r.lat and r.lon:
-                continue
-            lat, lon = get_country_center(r.country)
-            if lat is not None and lon is not None:
-                r.lat = str(lat)
-                r.lon = str(lon)
-                count += 1
-        db.commit()
-        return count
     finally:
         db.close()
 

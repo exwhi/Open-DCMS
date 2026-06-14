@@ -416,52 +416,9 @@ async def app(scope, receive, send):
                         return (None, None)
 
                 out = []
-                minutes = None
-                try:
-                    qs = scope.get('query_string', b'').decode()
-                    from urllib.parse import parse_qs
-                    params = parse_qs(qs)
-                    minutes = int(params.get('minutes', [None])[0]) if params.get('minutes') else None
-                except Exception:
-                    minutes = None
-
                 for r in rows:
-                    lat, lon = None, None
-                    # prefer DB-stored values if present
-                    if isinstance(r, dict):
-                        lat = r.get('lat')
-                        lon = r.get('lon')
-                    else:
-                        try:
-                            lat = getattr(r, 'lat', None)
-                            lon = getattr(r, 'lon', None)
-                        except Exception:
-                            lat = lon = None
-
-                    if not lat or not lon:
-                        lat, lon = get_country_center(r.get('country') if isinstance(r, dict) else getattr(r, 'country', None))
-                        # persist to DB when available
-                        try:
-                            if db_mod and lat is not None and lon is not None:
-                                try:
-                                    db_mod.set_asn_location(r.get('asn') if isinstance(r, dict) else getattr(r, 'asn', None), lat, lon)
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-
-                    weight = 0
-                    try:
-                        if minutes and db_mod:
-                            try:
-                                series = db_mod.aggregate_counts_by_asn(r.get('asn') if isinstance(r, dict) else getattr(r, 'asn', None), minutes=minutes)
-                                weight = sum(series.get('counts', [])) if series else 0
-                            except Exception:
-                                weight = 0
-                    except Exception:
-                        weight = 0
-
-                    item = {**r, 'lat': lat, 'lon': lon, 'weight': weight}
+                    lat, lon = get_country_center(r.get('country'))
+                    item = {**r, 'lat': lat, 'lon': lon}
                     out.append(item)
                 body = json.dumps({'items': out}, ensure_ascii=False).encode()
                 await send({'type': 'http.response.start', 'status': 200, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
