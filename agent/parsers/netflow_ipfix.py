@@ -10,6 +10,8 @@ import struct
 import socket
 import datetime
 
+from .ipfix_adapter import parse_ipfix
+
 
 def parse_datagram(data: bytes) -> List[dict]:
     """Parse an incoming UDP datagram and return list of records.
@@ -34,6 +36,10 @@ def parse_datagram(data: bytes) -> List[dict]:
 
     ts = datetime.datetime.utcnow().isoformat() + 'Z'
     if ver in (9, 10):
+        # try to parse using optional libraries via adapter
+        parsed = parse_ipfix(data)
+        if parsed:
+            return parsed
         return [{'raw': data.hex(), 'length': len(data), 'version': ver, 'note': 'v9/ipfix-unparsed', 'sample_time': ts}]
 
     # unknown/other: return safe raw record
