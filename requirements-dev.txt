@@ -1,8 +1,10 @@
 sqlalchemy
-radix
 pytest
 httpx
 pytest-asyncio
+# radix is optional and not available as 'radix' on PyPI in many environments.
+# The project contains a fallback implementation `backend/simple_radix.py`.
+# If you need the optimized C extension, install it manually (example package name may vary).
 
 # optional for real device adapters
 # netmiko
