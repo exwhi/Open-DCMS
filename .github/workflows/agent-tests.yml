@@ -26,7 +26,7 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; else pip install flake8; fi
       - name: Run flake8
         run: |
-          flake8 agent || true
+          flake8 agent
 
   test:
     name: Test (matrix)
@@ -71,3 +71,9 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+      - name: Upload to Codecov
+        if: secrets.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
