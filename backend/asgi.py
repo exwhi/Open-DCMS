@@ -399,6 +399,36 @@ async def app(scope, receive, send):
                 await send({'type': 'http.response.body', 'body': body})
             return
 
+        # GET /api/v1/asn/locations -> list ASNs with optional lat/lon
+        if method == 'GET' and path == '/api/v1/asn/locations':
+            if not db_mod:
+                body = json.dumps({'detail': 'DB not enabled'}).encode()
+                await send({'type': 'http.response.start', 'status': 404, 'headers': [[b'content-type', b'application/json']]} )
+                await send({'type': 'http.response.body', 'body': body})
+                return
+            try:
+                rows = db_mod.list_asns()
+                # use built-in country centroid lookup if available
+                try:
+                    from backend.data.country_centroids import get_country_center
+                except Exception:
+                    def get_country_center(x):
+                        return (None, None)
+
+                out = []
+                for r in rows:
+                    lat, lon = get_country_center(r.get('country'))
+                    item = {**r, 'lat': lat, 'lon': lon}
+                    out.append(item)
+                body = json.dumps({'items': out}, ensure_ascii=False).encode()
+                await send({'type': 'http.response.start', 'status': 200, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+                await send({'type': 'http.response.body', 'body': body})
+            except Exception as e:
+                body = json.dumps({'detail': 'failed', 'error': str(e)}).encode()
+                await send({'type': 'http.response.start', 'status': 500, 'headers': [[b'content-type', b'application/json; charset=utf-8']]} )
+                await send({'type': 'http.response.body', 'body': body})
+            return
+
         # GET /api/v1/asn/telemetry?asn=123&minutes=60
         if method == 'GET' and path == '/api/v1/asn/telemetry':
             if not db_mod:
@@ -708,6 +738,35 @@ async def app(scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": [[b"content-type", b"application/json"]]})
         await send({"type": "http.response.body", "body": body})
         return
+
+    # attempt to serve built frontend from frontend/dist if present
+    try:
+        dist_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+        if os.path.isdir(dist_dir):
+            rel = path.lstrip('/')
+            if rel == '':
+                rel = 'index.html'
+            fpath = os.path.join(dist_dir, rel)
+            if os.path.exists(fpath) and os.path.isfile(fpath):
+                try:
+                    with open(fpath, 'rb') as fh:
+                        body_bytes = fh.read()
+                    ctype = 'text/html'
+                    if fpath.endswith('.js'):
+                        ctype = 'application/javascript'
+                    elif fpath.endswith('.css'):
+                        ctype = 'text/css'
+                    elif fpath.endswith('.png'):
+                        ctype = 'image/png'
+                    elif fpath.endswith('.svg'):
+                        ctype = 'image/svg+xml'
+                    await send({'type': 'http.response.start', 'status': 200, 'headers': [[b'content-type', ctype.encode()]]})
+                    await send({'type': 'http.response.body', 'body': body_bytes})
+                    return
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     await send({"type": "http.response.start", "status": 404})
     await send({"type": "http.response.body", "body": b""})
