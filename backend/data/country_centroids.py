@@ -4,6 +4,8 @@ Keys: ISO2 code or common country name uppercase -> (lat, lon)
 This is a lightweight fallback; for production consider GeoNames or similar.
 """
 import os
+import time
+import threading
 
 MAPPING = {
     'CN': (35.8617, 104.1954), 'CHINA': (35.8617, 104.1954),
@@ -42,40 +44,78 @@ MAPPING = {
     'AE': (23.4241, 53.8478), 'UAE': (23.4241, 53.8478), 'UNITED ARAB EMIRATES': (23.4241, 53.8478),
 }
 
-def get_country_center(name):
-    if not name:
-        return (None, None)
-    key = str(name).strip().upper()
-    if key in MAPPING:
-        return MAPPING[key]
-    if len(key) >= 2 and key[:2] in MAPPING:
-        return MAPPING[key[:2]]
-    # optional GeoNames fallback when GEONAMES_USERNAME is set
+_cache = {}
+# cache entry: key -> (lat, lon, expires_at)
+_cache_lock = threading.Lock()
+# last request timestamp for GeoNames to enforce min interval
+_last_request = 0.0
+_last_request_lock = threading.Lock()
+
+# config
+_MIN_INTERVAL = float(os.getenv('GEONAMES_MIN_INTERVAL', '1.0'))
+_TTL = int(os.getenv('GEONAMES_TTL', str(60*60*24)))  # seconds, default 24h
+
+def _fetch_geonames_centroid(code):
     user = os.getenv('GEONAMES_USERNAME')
     if not user:
         return (None, None)
-    # try to interpret key as ISO country code and call countryInfoJSON
-    code = key[:2]
+    now = time.time()
+    with _last_request_lock:
+        global _last_request
+        if now - _last_request < _MIN_INTERVAL:
+            # rate limited: skip
+            return (None, None)
+        _last_request = now
     try:
         import requests
         url = f'https://secure.geonames.org/countryInfoJSON?country={code}&username={user}'
         r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            j = r.json()
-            gl = j.get('geonames') or []
-            if gl:
-                item = gl[0]
-                # compute centroid from bounding box if available
-                try:
-                    north = float(item.get('north'))
-                    south = float(item.get('south'))
-                    east = float(item.get('east'))
-                    west = float(item.get('west'))
-                    lat = (north + south) / 2.0
-                    lon = (east + west) / 2.0
-                    return (lat, lon)
-                except Exception:
-                    pass
+        if r.status_code != 200:
+            return (None, None)
+        j = r.json()
+        gl = j.get('geonames') or []
+        if not gl:
+            return (None, None)
+        item = gl[0]
+        try:
+            north = float(item.get('north'))
+            south = float(item.get('south'))
+            east = float(item.get('east'))
+            west = float(item.get('west'))
+            lat = (north + south) / 2.0
+            lon = (east + west) / 2.0
+            return (lat, lon)
+        except Exception:
+            return (None, None)
     except Exception:
-        pass
+        return (None, None)
+
+def get_country_center(name):
+    if not name:
+        return (None, None)
+    key = str(name).strip().upper()
+    # first, check static mapping
+    if key in MAPPING:
+        return MAPPING[key]
+    if len(key) >= 2 and key[:2] in MAPPING:
+        return MAPPING[key[:2]]
+
+    # check cache
+    with _cache_lock:
+        ent = _cache.get(key)
+        if ent:
+            lat, lon, exp = ent
+            if exp is None or exp > time.time():
+                return (lat, lon)
+            else:
+                del _cache[key]
+
+    # try GeoNames by country code (first two letters)
+    code = key[:2]
+    lat, lon = _fetch_geonames_centroid(code)
+    if lat is not None and lon is not None:
+        with _cache_lock:
+            _cache[key] = (lat, lon, time.time() + _TTL)
+        return (lat, lon)
+
     return (None, None)
