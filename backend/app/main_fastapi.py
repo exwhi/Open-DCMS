@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Request, status, Depends
+from fastapi import FastAPI, Header, HTTPException, Request, status, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Optional
 import os
@@ -7,6 +7,38 @@ from datetime import datetime
 from backend import auth
 from backend import db
 from uuid import uuid4
+import asyncio
+
+
+class ConnectionManager:
+    def __init__(self):
+        # tenant_id -> set of websockets
+        self._conns = {}
+        self._lock = asyncio.Lock()
+
+    async def connect(self, tenant: str, ws: WebSocket):
+        await ws.accept()
+        async with self._lock:
+            self._conns.setdefault(tenant, set()).add(ws)
+
+    async def disconnect(self, tenant: str, ws: WebSocket):
+        async with self._lock:
+            conns = self._conns.get(tenant)
+            if conns and ws in conns:
+                conns.remove(ws)
+
+    async def broadcast(self, tenant: str, message: str):
+        async with self._lock:
+            conns = list(self._conns.get(tenant, []))
+        for ws in conns:
+            try:
+                await ws.send_text(message)
+            except Exception:
+                # ignore send errors; cleanup happens on disconnect
+                pass
+
+
+manager = ConnectionManager()
 
 app = FastAPI(title="Open-DCMS Ingest API")
 
@@ -42,6 +74,13 @@ async def ingest(item: IngestPayload, x_api_key: Optional[str] = Header(None)):
     }
     with open(fname, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    # Broadcast to any WebSocket subscribers for this tenant
+    try:
+        # fire-and-forget broadcast
+        asyncio.create_task(manager.broadcast(tenant, json.dumps(record, ensure_ascii=False)))
+    except Exception:
+        pass
 
     return {"result": "stored", "tenant": tenant}
 
@@ -180,3 +219,23 @@ def get_user_audit(tenant_id: str, limit: int = 50, cursor: Optional[str] = None
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='cannot list audit for other tenant')
     res = db.list_user_audit(tenant_id=tenant_id, limit=limit, cursor=cursor)
     return res
+
+
+@app.websocket('/ws/telemetry/{tenant_id}')
+async def websocket_telemetry(websocket: WebSocket, tenant_id: str):
+    """Simple WebSocket endpoint to stream ingest events for a tenant."""
+    await manager.connect(tenant_id, websocket)
+    try:
+        while True:
+            # keep the connection alive; echo pings
+            data = await websocket.receive_text()
+            # clients may send 'ping' to keep connection alive; ignore payload
+            if data == 'ping':
+                await websocket.send_text('pong')
+    except WebSocketDisconnect:
+        await manager.disconnect(tenant_id, websocket)
+    except Exception:
+        try:
+            await manager.disconnect(tenant_id, websocket)
+        except Exception:
+            pass
