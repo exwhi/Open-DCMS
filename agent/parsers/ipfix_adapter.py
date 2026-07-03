@@ -17,6 +17,46 @@ choose a specific package for production.
 from typing import List, Optional
 
 
+def _normalize_value(value):
+    try:
+        import ipaddress
+        if isinstance(value, ipaddress.IPv4Address) or isinstance(value, ipaddress.IPv6Address):
+            return str(value)
+    except Exception:
+        pass
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except Exception:
+            return value.hex()
+    return value
+
+
+def _build_record_from_namedict(namedict: dict, sample_time: str) -> dict:
+    src = _normalize_value(namedict.get('sourceIPv4Address') or namedict.get('sourceIPv6Address'))
+    dst = _normalize_value(namedict.get('destinationIPv4Address') or namedict.get('destinationIPv6Address'))
+    src_port = namedict.get('sourceTransportPort') or namedict.get('sourcePort')
+    dst_port = namedict.get('destinationTransportPort') or namedict.get('destinationPort')
+    prefix = None
+    prefix_len = namedict.get('sourceIPv4PrefixLength') or namedict.get('sourceIPv6PrefixLength')
+    if src:
+        if prefix_len is not None:
+            prefix = f"{src}/{prefix_len}"
+        else:
+            prefix = f"{src}/32"
+    rec = {
+        'prefixes': [prefix] if prefix else None,
+        'asn': namedict.get('bgpSourceAsNumber') or namedict.get('bgpDestinationAsNumber'),
+        'sample_time': sample_time,
+        'src': src,
+        'dst': dst,
+        'src_port': int(src_port) if src_port is not None else None,
+        'dst_port': int(dst_port) if dst_port is not None else None,
+        'raw': None,
+    }
+    return rec
+
+
 def parse_ipfix(data: bytes) -> Optional[List[dict]]:
     """Try to parse IPFIX/v9 payload using an available library.
 
@@ -25,58 +65,25 @@ def parse_ipfix(data: bytes) -> Optional[List[dict]]:
     if not data:
         return None
 
-    # Try pyfixbuf first
     try:
-        import pyfixbuf
-    except Exception:
-        pyfixbuf = None
-
-    if pyfixbuf is not None:
+        import ipfix.message as msg
+        mb = msg.MessageBuffer()
+        mb.from_bytes(data)
+        sample_time = None
         try:
-            # Best-effort: many installations expose a collector/decoder API;
-            # we attempt to use common-friendly interfaces and fall back on
-            # returning None if the concrete API differs.
-            if hasattr(pyfixbuf, 'IPFIXDecoder'):
-                dec = pyfixbuf.IPFIXDecoder()
-                dec.feed(data)
-                out = []
-                for rec in dec.records():
-                    # attempt to map fields; library-specific keys vary
-                    d = {k: getattr(rec, k, None) for k in ('src', 'dst', 'src_port', 'dst_port')}
-                    out.append(d)
-                return out or None
-            # fallback to generic decode function if present
-            if hasattr(pyfixbuf, 'decode'):
-                decoded = pyfixbuf.decode(data)
-                return decoded if isinstance(decoded, list) and decoded else None
+            sample_time = mb.get_export_time().isoformat() + 'Z'
         except Exception:
-            pass
+            import datetime
+            sample_time = datetime.datetime.utcnow().isoformat() + 'Z'
 
-    # Try ipfix package
-    try:
-        import ipfix
+        records = []
+        for namedict in mb.namedict_iterator():
+            if not isinstance(namedict, dict):
+                continue
+            rec = _build_record_from_namedict(namedict, sample_time)
+            records.append(rec)
+        return records if records else None
     except Exception:
-        ipfix = None
-
-    if ipfix is not None:
-        try:
-            # best-effort parsing calls; actual API depends on package
-            if hasattr(ipfix, 'IpfixParser'):
-                parser = ipfix.IpfixParser()
-                msgs = parser.parse(data)
-                out = []
-                for m in msgs:
-                    # normalize common fields if present
-                    rec = {}
-                    for k in ('sourceIPv4Address', 'destinationIPv4Address', 'sourceTransportPort', 'destinationTransportPort'):
-                        if k in m:
-                            rec[k] = m[k]
-                    out.append(rec)
-                return out or None
-            if hasattr(ipfix, 'parse'):
-                p = ipfix.parse(data)
-                return p if isinstance(p, list) and p else None
-        except Exception:
-            pass
+        pass
 
     return None

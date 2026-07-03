@@ -1,3 +1,4 @@
+import io
 import time
 import struct
 from agent.parsers.netflow_ipfix import parse_datagram
@@ -26,6 +27,36 @@ def _build_v5_packet(src='1.2.3.4', dst='5.6.7.8', src_port=1234, dst_port=80):
     return header + bytes(rec)
 
 
+def _build_ipfix_packet():
+    import ipfix.ie as ie
+    import ipfix.message as msg
+    import ipfix.template as tmpl
+    import ipfix.types as types
+
+    ie.use_iana_default()
+
+    specs = [
+        'sourceIPv4Address(0)/4',
+        'destinationIPv4Address(0)/4',
+        'sourceTransportPort(0)/2',
+        'destinationTransportPort(0)/2',
+    ]
+    tpl = tmpl.for_specs(256, *specs)
+    mb = msg.MessageBuffer()
+    mb.begin_export(odid=0)
+    mb.add_template(tpl)
+    mb.export_new_set(256)
+    mb.export_namedict({
+        'sourceIPv4Address': types.ip_address('1.2.3.4'),
+        'destinationIPv4Address': types.ip_address('5.6.7.8'),
+        'sourceTransportPort': 1234,
+        'destinationTransportPort': 80,
+    })
+    buf = io.BytesIO()
+    mb.write_message(buf)
+    return buf.getvalue()
+
+
 def test_parse_v5_basic():
     pkt = _build_v5_packet()
     recs = parse_datagram(pkt)
@@ -45,3 +76,16 @@ def test_fallback_for_v9_ipfix():
     recs = parse_datagram(data)
     assert len(recs) == 1
     assert recs[0]['version'] == 9
+
+
+def test_parse_ipfix_v10_with_ipfix_lib():
+    pkt = _build_ipfix_packet()
+    recs = parse_datagram(pkt)
+    assert isinstance(recs, list)
+    assert len(recs) == 1
+    r = recs[0]
+    assert r['src'] == '1.2.3.4'
+    assert r['dst'] == '5.6.7.8'
+    assert r['src_port'] == 1234
+    assert r['dst_port'] == 80
+    assert r['prefixes'] == ['1.2.3.4/32']
