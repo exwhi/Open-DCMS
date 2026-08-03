@@ -5,6 +5,7 @@
       <button @click="showAdmin = !showAdmin">切换 Admin 密钥管理</button>
       <button @click="showQuery = !showQuery" style="margin-left:8px">切换 Query 界面</button>
       <button @click="showASN = !showASN" style="margin-left:8px">切换 ASN 拓扑</button>
+      <button @click="showMap = !showMap" style="margin-left:8px">切换 全局地图</button>
       <button @click="showBH = !showBH" style="margin-left:8px">黑洞审计</button>
     </div>
     <div>
@@ -12,6 +13,7 @@
       <QueryView v-else-if="showQuery" />
       <BlackholeLogs v-else-if="showBH" />
       <ASNView v-else-if="showASN" />
+      <MapView v-else-if="showMap" />
       <RoomView v-else />
     </div>
   </div>
@@ -23,12 +25,14 @@ import RoomView from './components/RoomView.vue'
 import AdminKeys from './components/AdminKeys.vue'
 import QueryView from './components/QueryView.vue'
 import ASNView from './components/ASNView.vue'
+import MapView from './components/MapView.vue'
 import BlackholeLogs from './components/BlackholeLogs.vue'
 
 const showAdmin = ref(false)
 const showQuery = ref(false)
 const showASN = ref(false)
 const showBH = ref(false)
+const showMap = ref(false)
 </script>
 
 <style>

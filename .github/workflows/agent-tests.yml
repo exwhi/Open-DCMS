@@ -1,0 +1,79 @@
+name: Agent CI
+
+on:
+  push:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-tests.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-tests.yml'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install linter
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; else pip install flake8; fi
+      - name: Run flake8
+        run: |
+          flake8 agent
+
+  test:
+    name: Test (matrix)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; elif [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install pytest coverage; fi
+      - name: Run tests with coverage
+        run: |
+          python -m pip install coverage
+          coverage run -m pytest -q agent/tests
+          coverage xml -o coverage.xml
+          coverage report -m
+      - name: Upload coverage artifact (only on 3.12)
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage.xml
+          path: coverage.xml
+
+  upload-coverage:
+    name: Upload coverage
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage.xml
+      - name: Save coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+      - name: Upload to Codecov
+        if: secrets.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}

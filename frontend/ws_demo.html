@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Open-DCMS Telemetry WS Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 1rem; }
+    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: 1rem; height: 60vh; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>Telemetry WebSocket Demo</h1>
+  <p>Open the developer console or use this page to view messages.</p>
+  <label>Server (ws:// or wss://): <input id="server" value="ws://localhost:8000/ws/telemetry/demo"></label>
+  <button id="connect">Connect</button>
+  <button id="disconnect" disabled>Disconnect</button>
+  <div id="log"></div>
+
+  <script>
+    let ws;
+    const logEl = document.getElementById('log');
+    const serverInput = document.getElementById('server');
+    const connectBtn = document.getElementById('connect');
+    const disconnectBtn = document.getElementById('disconnect');
+
+    function log(msg){
+      const t = new Date().toISOString();
+      logEl.textContent = `[${t}] ${msg}\n` + logEl.textContent;
+    }
+
+    connectBtn.addEventListener('click', ()=>{
+      const url = serverInput.value;
+      ws = new WebSocket(url);
+      ws.onopen = ()=>{ log('connected'); connectBtn.disabled = true; disconnectBtn.disabled = false; };
+      ws.onmessage = (ev)=>{ log('MSG: ' + ev.data); };
+      ws.onclose = ()=>{ log('closed'); connectBtn.disabled = false; disconnectBtn.disabled = true; };
+      ws.onerror = (e)=>{ log('error'); console.error(e); };
+    });
+
+    disconnectBtn.addEventListener('click', ()=>{
+      if(ws) ws.close();
+    });
+  </script>
+</body>
+</html>

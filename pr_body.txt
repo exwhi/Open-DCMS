@@ -1,0 +1,23 @@
+## Summary
+
+This PR completes the NetFlow and IPFIX parser integration with mature template parsing support:
+
+## Detailed changes:
+- agent/parsers/netflow_ipfix.py: detect versions 5/9/10, route v5 to native parser, v9/10 to optional adapters
+- agent/parsers/ipfix_adapter.py: integrate ipfix library for real IPFIX/v9/v10 parsing; normalize IP objects and construct standard records with prefixes
+- agent/tests/test_netflow_ipfix.py: add roundtrip test using ipfix library for v10 packet encode/decode
+- requirements-dev.txt: add ipfix for flow parsing support
+
+## Test Coverage:
+- 13 agent tests pass (NetFlow v5 + fallback v9 + real IPFIX v10)
+- Local flake8 check passes
+- CI matrix: Python 3.11/3.12 with coverage reporting
+
+## Protection:
+- Pre-commit hook blocks any changes to proposal file locally
+- GitHub Actions workflow enforces proposal file protection on PRs
+- Agent parsers remain functional even without optional ipfix library (graceful fallback)
+
+## Verification:
+All tests pass locally. Ready for GitHub Actions CI validation.
+

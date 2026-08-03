@@ -1,0 +1,24 @@
+name: Block proposal changes
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  block-proposal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for proposal file changes
+        run: |
+          set -e
+          PROPOSAL='Open-DCMS 项目企划书.md'
+          # list files changed in the PR
+          git fetch --no-tags --prune --depth=1 origin +refs/heads/*:refs/remotes/origin/* || true
+          CHANGED=$(git diff --name-status origin/${{ github.event.pull_request.base.ref }}...HEAD || true)
+          echo "Changed files:\n$CHANGED"
+          if echo "$CHANGED" | awk '{print $2}' | grep -x -- "$PROPOSAL" >/dev/null 2>&1; then
+            echo "Proposal file modified or deleted in this PR. Blocking as policy."
+            exit 1
+          fi
+        shell: bash

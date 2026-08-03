@@ -5,9 +5,18 @@ import socket
 import json
 import os
 import uuid
+import logging
 from pathlib import Path
 
+from agent.queue_manager import PersistentQueue
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Legacy JSONL queue (deprecated, kept for backward compatibility)
 QUEUE_FILE = Path(".agent_queue.jsonl")
 
 
@@ -66,44 +75,103 @@ def rewrite_queue(items):
     tmp.replace(QUEUE_FILE)
 
 
-def try_send(url, headers, payload, max_attempts=5):
+def try_send(url, headers, payload, ca_cert=None, client_cert=None, client_key=None, max_attempts=5):
+    """Send payload with optional mTLS.
+    
+    Args:
+        url: Target URL
+        headers: HTTP headers
+        payload: Payload dict
+        ca_cert: Path to CA certificate for verification (None = default)
+        client_cert: Path to client certificate for mTLS
+        client_key: Path to client key for mTLS
+        max_attempts: Max retry attempts
+    """
     for attempt in range(1, max_attempts + 1):
         try:
-            r = requests.post(url, json=payload, headers=headers, timeout=10)
+            kwargs = {
+                'json': payload,
+                'headers': headers,
+                'timeout': 10,
+                'verify': ca_cert if ca_cert else True,  # Use custom CA or default
+            }
+            
+            # Add client certificate if provided
+            if client_cert and client_key:
+                kwargs['cert'] = (client_cert, client_key)
+            
+            r = requests.post(url, **kwargs)
             if r.status_code == 200:
-                print(f"sent ok id={payload.get('id')}")
+                logger.info(f"sent ok id={payload.get('id')}")
                 return True
             else:
-                print(f"send failed status={r.status_code} id={payload.get('id')}")
+                logger.warning(f"send failed status={r.status_code} id={payload.get('id')}")
+        except requests.exceptions.SSLError as e:
+            logger.error(f"SSL/mTLS error attempt={attempt} id={payload.get('id')}: {e}")
         except Exception as e:
-            print(f"send exception attempt={attempt} id={payload.get('id')} error={e}")
+            logger.error(f"send exception attempt={attempt} id={payload.get('id')} error={e}")
+        
         backoff = min(2 ** attempt, 30)
         time.sleep(backoff)
     return False
 
 
-def flush_queue(server, api_key):
+def flush_queue(queue_manager: PersistentQueue, server, api_key, ca_cert=None, client_cert=None, client_key=None):
+    """Flush pending queue items.
+    
+    Args:
+        queue_manager: PersistentQueue instance
+        server: Server URL
+        api_key: API key
+        ca_cert: Path to CA certificate
+        client_cert: Path to client certificate
+        client_key: Path to client key
+    """
     url = server.rstrip("/") + "/api/v1/ingest"
     headers = {"X-API-Key": api_key}
-    items = load_queue()
-    if not items:
+    
+    payloads = queue_manager.dequeue(max_items=100)
+    if not payloads:
         return
-    remaining = []
-    print(f"flushing {len(items)} queued items")
-    for it in items:
-        ok = try_send(url, headers, it)
-        if not ok:
-            remaining.append(it)
-    rewrite_queue(remaining)
+    
+    logger.info(f"flushing {len(payloads)} queued items")
+    for payload in payloads:
+        db_id = payload.pop('_db_id', None)
+        payload_id = payload.get('id')
+        
+        ok = try_send(url, headers, payload, ca_cert=ca_cert, client_cert=client_cert, client_key=client_key)
+        if ok:
+            queue_manager.mark_sent(payload_id)
+        elif db_id:
+            queue_manager.mark_failed(db_id, f"HTTP error or timeout")
+    
+    # Cleanup old sent records
+    queue_manager.cleanup_old(days=7)
 
 
-def run(server, tenant, api_key, interval=10):
+def run(server, tenant, api_key, interval=10, queue_db=None, ca_cert=None, client_cert=None, client_key=None):
+    """Run agent with persistent queue and optional mTLS.
+    
+    Args:
+        server: Server URL
+        tenant: Tenant ID
+        api_key: API key
+        interval: Collection interval (seconds)
+        queue_db: Path to queue database (defaults to ~/.cache/open-dcms-agent/queue.db)
+        ca_cert: Path to CA certificate for verification
+        client_cert: Path to client certificate for mTLS
+        client_key: Path to client key for mTLS
+    """
     url = server.rstrip("/") + "/api/v1/ingest"
     headers = {"X-API-Key": api_key}
+    
+    # Initialize queue manager
+    queue_manager = PersistentQueue(db_path=queue_db)
 
-    # flush any pending items first
-    flush_queue(server, api_key)
-    # load plugins dynamically
+    # Flush any pending items first
+    flush_queue(queue_manager, server, api_key, ca_cert=ca_cert, client_cert=client_cert, client_key=client_key)
+    
+    # Load plugins dynamically
     try:
         from agent.plugins import load_plugins
         plugins = load_plugins()
@@ -119,21 +187,39 @@ def run(server, tenant, api_key, interval=10):
                 "timestamp": time.time(),
                 "payload": sample_payload(plugins=plugins),
             }
-            ok = try_send(url, headers, payload)
+            
+            ok = try_send(url, headers, payload, ca_cert=ca_cert, client_cert=client_cert, client_key=client_key)
             if not ok:
-                print("appending to local queue")
-                append_queue(payload)
+                logger.info("appending to local queue")
+                queue_manager.enqueue(payload)
+            
             time.sleep(interval)
     except KeyboardInterrupt:
-        print("stopping agent, flushing queue")
-        flush_queue(server, api_key)
+        logger.info("stopping agent, flushing queue")
+        flush_queue(queue_manager, server, api_key, ca_cert=ca_cert, client_cert=client_cert, client_key=client_key)
+        # Print queue stats before exit
+        stats = queue_manager.get_stats()
+        logger.info(f"Final queue stats: {stats}")
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--server", required=True)
-    p.add_argument("--tenant", required=True)
-    p.add_argument("--api-key", default="dev-secret")
-    p.add_argument("--interval", type=int, default=10)
+    p = argparse.ArgumentParser(description="Open-DCMS Agent with persistent queue and mTLS support")
+    p.add_argument("--server", required=True, help="Server URL (e.g., https://dcms.example.com)")
+    p.add_argument("--tenant", required=True, help="Tenant ID")
+    p.add_argument("--api-key", default="dev-secret", help="API key")
+    p.add_argument("--interval", type=int, default=10, help="Collection interval (seconds)")
+    p.add_argument("--queue-db", default=None, help="Path to queue database (defaults to ~/.cache/open-dcms-agent/queue.db)")
+    p.add_argument("--ca-cert", default=None, help="Path to CA certificate for HTTPS verification")
+    p.add_argument("--client-cert", default=None, help="Path to client certificate for mTLS")
+    p.add_argument("--client-key", default=None, help="Path to client key for mTLS")
     args = p.parse_args()
-    run(args.server, args.tenant, args.api_key, args.interval)
+    run(
+        args.server, 
+        args.tenant, 
+        args.api_key, 
+        args.interval,
+        queue_db=args.queue_db,
+        ca_cert=args.ca_cert,
+        client_cert=args.client_cert,
+        client_key=args.client_key,
+    )
